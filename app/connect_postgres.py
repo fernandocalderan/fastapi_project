@@ -1,22 +1,36 @@
+import os
+
 import psycopg2
+from dotenv import load_dotenv
 
-# Conexión
-conn = psycopg2.connect(
-    dbname="fastapi_db",
-    user="postgres",
-    password="Faccaf21$",
-    host="localhost",
-    port="5432"
-)
 
-cur = conn.cursor()
+def main() -> None:
+    load_dotenv()
 
-# Consulta
-cur.execute("SELECT * FROM users;")
-rows = cur.fetchall()
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL no está definido en el entorno.")
 
-for row in rows:
-    print(row)
+    conn = psycopg2.connect(database_url)
+    cur = conn.cursor()
 
-cur.close()
-conn.close()
+    cur.execute(
+        """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+        ORDER BY table_name;
+        """
+    )
+    tables = cur.fetchall()
+
+    print("Tablas disponibles en la base de datos:")
+    for table in tables:
+        print(f"- {table[0]}")
+
+    cur.close()
+    conn.close()
+
+
+if __name__ == "__main__":
+    main()

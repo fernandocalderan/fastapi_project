@@ -1,0 +1,347 @@
+-- seed_distributor_db_full.sql
+-- PostgreSQL 13+ | Educational seed DB for a food & beverage distributor
+-- English data content simulated. Prices in EUR (net). VAT applied via vat_rate.
+BEGIN;
+
+-- Drop previous
+DROP TABLE IF EXISTS order_items CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
+DROP TABLE IF EXISTS product_allergens CASCADE;
+DROP TABLE IF EXISTS allergens CASCADE;
+DROP TABLE IF EXISTS products CASCADE;
+DROP TABLE IF EXISTS clients CASCADE;
+DROP TABLE IF EXISTS providers CASCADE;
+DROP TABLE IF EXISTS workers CASCADE;
+
+-- PROVIDERS
+CREATE TABLE providers (
+  id SERIAL PRIMARY KEY,
+  company_name TEXT NOT NULL,
+  vat_number VARCHAR(30) NOT NULL UNIQUE,
+  address TEXT,
+  city VARCHAR(100),
+  country VARCHAR(100),
+  phone VARCHAR(30),
+  email VARCHAR(150),
+  contact_person VARCHAR(120),
+  provider_type VARCHAR(50),
+  certifications TEXT,
+  registration_date DATE,
+  status VARCHAR(20) DEFAULT 'Active'
+);
+
+-- WORKERS
+CREATE TABLE workers (
+  id SERIAL PRIMARY KEY,
+  full_name VARCHAR(120) NOT NULL,
+  national_id VARCHAR(30) UNIQUE NOT NULL,
+  role VARCHAR(80),
+  department VARCHAR(80),
+  birth_date DATE,
+  hire_date DATE,
+  gross_annual_salary NUMERIC(12,2),
+  contract_type VARCHAR(30),
+  phone VARCHAR(30),
+  email VARCHAR(150),
+  address TEXT,
+  city VARCHAR(80),
+  postal_code VARCHAR(12),
+  country VARCHAR(80),
+  status VARCHAR(20) DEFAULT 'Active'
+);
+
+-- CLIENTS (legal entities)
+CREATE TABLE clients (
+  id SERIAL PRIMARY KEY,
+  company_name TEXT NOT NULL,
+  vat_number VARCHAR(30) UNIQUE NOT NULL,
+  billing_address TEXT,
+  city VARCHAR(80),
+  province VARCHAR(80),
+  postal_code VARCHAR(12),
+  country VARCHAR(80),
+  phone VARCHAR(30),
+  email VARCHAR(150),
+  contact_person VARCHAR(120),
+  client_type VARCHAR(40),
+  annual_volume_estimate NUMERIC(14,2),
+  signup_date DATE,
+  status VARCHAR(20) DEFAULT 'Active'
+);
+
+-- ALLERGENS (normalized)
+CREATE TABLE allergens (
+  id SERIAL PRIMARY KEY,
+  code VARCHAR(30) UNIQUE NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description TEXT
+);
+
+-- PRODUCTS (catalog) — includes traceability fields and VAT
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  sku VARCHAR(40) UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  brand VARCHAR(120),
+  category VARCHAR(80),
+  description TEXT,
+  ingredients TEXT,
+  net_weight VARCHAR(40),
+  format_description VARCHAR(80),
+  origin_country VARCHAR(80),
+  provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
+  lot_code VARCHAR(60),
+  production_date DATE,
+  best_before DATE,
+  registration_number VARCHAR(60),
+  unit_cost NUMERIC(10,2),
+  margin_percent NUMERIC(5,2),
+  unit_price NUMERIC(10,2),
+  vat_rate NUMERIC(5,2) DEFAULT 10.00, -- default VAT (percent). Use 10 or 21 as needed.
+  unit_price_inc_vat NUMERIC(12,2) GENERATED ALWAYS AS (round(unit_price * (1 + vat_rate/100),2)) STORED,
+  uom VARCHAR(20),
+  created_at DATE,
+  status VARCHAR(20) DEFAULT 'Active'
+);
+
+-- Junction table: product_allergens
+CREATE TABLE product_allergens (
+  product_id INT REFERENCES products(id) ON DELETE CASCADE,
+  allergen_id INT REFERENCES allergens(id) ON DELETE CASCADE,
+  PRIMARY KEY (product_id, allergen_id)
+);
+
+-- ORDERS + ITEMS (sample sales data)
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  client_id INT REFERENCES clients(id) ON DELETE SET NULL,
+  order_date TIMESTAMP NOT NULL DEFAULT now(),
+  status VARCHAR(30) DEFAULT 'Pending',
+  total_net NUMERIC(14,2) DEFAULT 0,
+  total_vat NUMERIC(14,2) DEFAULT 0,
+  total_gross NUMERIC(14,2) DEFAULT 0
+);
+
+CREATE TABLE order_items (
+  id SERIAL PRIMARY KEY,
+  order_id INT REFERENCES orders(id) ON DELETE CASCADE,
+  product_id INT REFERENCES products(id) ON DELETE SET NULL,
+  quantity INT NOT NULL CHECK (quantity > 0),
+  unit_price_net NUMERIC(10,2) NOT NULL,
+  vat_rate NUMERIC(5,2) NOT NULL,
+  line_total_net NUMERIC(14,2) GENERATED ALWAYS AS (round(unit_price_net * quantity,2)) STORED,
+  line_total_vat NUMERIC(14,2) GENERATED ALWAYS AS (round(line_total_net * (vat_rate/100),2)) STORED,
+  line_total_gross NUMERIC(14,2) GENERATED ALWAYS AS (round(line_total_net * (1 + vat_rate/100),2)) STORED
+);
+
+-- Indexes for performance
+CREATE INDEX idx_products_sku ON products(sku);
+CREATE INDEX idx_products_brand ON products(brand);
+CREATE INDEX idx_clients_vat ON clients(vat_number);
+CREATE INDEX idx_providers_vat ON providers(vat_number);
+CREATE INDEX idx_orders_client ON orders(client_id);
+
+-- Helper function to generate fake VAT-like identifiers (educational only)
+CREATE OR REPLACE FUNCTION gen_vat(prefix TEXT, seq INT) RETURNS TEXT AS $$
+BEGIN
+  RETURN prefix || to_char(10000000 + (seq % 90000000), 'FM99999999');
+END; $$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Seed minimal allergens table (standard EU allergens)
+INSERT INTO allergens (code, name, description) VALUES
+('GLUTEN','Gluten','Protein found in wheat, rye, barley'),
+('CRUSTACEANS','Crustaceans','Shrimp, crab, lobster'),
+('EGGS','Eggs','Eggs and products thereof'),
+('FISH','Fish','All fishes'),
+('PEANUTS','Peanuts','Peanut and products thereof'),
+('SOY','Soy','Soy and products thereof'),
+('MILK','Milk','Milk and dairy products'),
+('NUTS','TreeNuts','Tree nuts: almonds, hazelnuts...'),
+('CELERY','Celery','Celery and products'),
+('MUSTARD','Mustard','Mustard and products'),
+('SESAME','Sesame','Sesame seeds and products'),
+('SULPHITES','Sulphites','Sulphites and sulphur dioxide');
+
+-- Seed providers (50) - simplified realistic-simulated
+WITH brands AS (
+  SELECT unnest(ARRAY[
+    'GreenHarvest Foods','AquaPure Beverages','Sunfield Organics','Bella Snacks',
+    'GoldenGrain Mills','VitalJuice Co','OceanCatch Seafood','MountainDairy','VivaCoffee Roasters','PureSip Waters',
+    'UrbanBread Co','CampoOlive Oils','CrispBite Snacks','Meadow Eggs','RedVine Wines',
+    'HerbGarden Spices','PrimeMeats Ltd.','EcoPack Solutions','BrewHouse Ales','FreshCatch'
+  ]) AS brand
+)
+INSERT INTO providers (company_name, vat_number, address, city, country, phone, email, contact_person, provider_type, certifications, registration_date, status)
+SELECT
+  concat(brand, ' Ltd.') as company_name,
+  gen_vat('EU', g) as vat_number,
+  concat((g % 200)+1, ' Supplier Ave') as address,
+  (ARRAY['Barcelona','Madrid','Valencia','Seville','Bilbao','Lisbon','Porto','Paris','Milan','Berlin'])[1 + (g % 10)],
+  (ARRAY['Spain','Spain','Spain','Spain','Portugal','Portugal','France','Italy','Germany','Netherlands'])[1 + (g % 10)],
+  concat('+34', (600000000 + (g * 31))::text),
+  lower(replace(brand,' ','') || '@supplier.example.com'),
+  concat( (ARRAY['Alice Green','Mark Stone','Sofia Rossi','Luis Garcia','Emma Moreira'])[1 + (g % 5)] ),
+  (ARRAY['Food','Beverage','Packaging','Logistics','Ingredients'])[1 + (g % 5)],
+  (ARRAY['ISO 22000','BRC','IFS','Organic Cert','HACCP'])[1 + (g % 5)],
+  (current_date - (g % 365))::date,
+  'Active'
+FROM generate_series(1,50) AS g;
+
+-- Seed workers (20)
+INSERT INTO workers (full_name, national_id, role, department, birth_date, hire_date, gross_annual_salary, contract_type, phone, email, address, city, postal_code, country, status)
+SELECT
+  (ARRAY['Fernando Aringhieri','Lilian Aguiar','Carlos Mendes','Sara Lopez','Miguel Santos','Anna Keller','John Smith','Emily Clark','Oliver Brown','Sofia Martins','Luis Rodriguez','Marta Diaz','Pablo Ruiz','Clara Iglesias','David Perez','Nora Silva','Hugo Fernandes','Laura Gomez','Iker Martinez','Elena Torres'])[g] as full_name,
+  concat('ID', to_char(10000000 + g, 'FM9999999')) as national_id,
+  (ARRAY['Logistics Manager','Warehouse Operative','Sales Executive','Accountant','Procurement Specialist','Driver','Quality Technician','Customer Success','IT Specialist','HR Manager'])[1 + (g % 10)] as role,
+  (ARRAY['Logistics','Operations','Sales','Finance','Procurement','Transport','Quality','Customer','IT','HR'])[1 + (g % 10)] as department,
+  (date '1980-01-01' + (g * 1000) * interval '1 day')::date as birth_date,
+  (current_date - (g * 30))::date as hire_date,
+  (22000 + (g % 10) * 1400)::numeric(12,2) as gross_annual_salary,
+  (ARRAY['Indefinido','Temporal','Indefinido','Prácticas'])[1 + (g % 4)] as contract_type,
+  concat('+34', (610000000 + g)::text) as phone,
+  lower(replace((ARRAY['fernando','lilian','carlos','sara','miguel','anna','john','emily','oliver','sofia','luis','marta','pablo','clara','david','nora','hugo','laura','iker','elena'])[g], ' ', '')) || '@distributor.example.com' as email,
+  concat((10 + g % 90), ' Industrial Park') as address,
+  (ARRAY['Barcelona','Madrid','Valencia','Seville','Bilbao'])[1 + (g % 5)] as city,
+  to_char(8000 + g, 'FM00000') as postal_code,
+  'Spain' as country,
+  'Active'
+FROM generate_series(1,20) AS g;
+
+-- Seed clients (500)
+INSERT INTO clients (company_name, vat_number, billing_address, city, province, postal_code, country, phone, email, contact_person, client_type, annual_volume_estimate, signup_date, status)
+SELECT
+  concat((ARRAY['BlueStone','LaVida','CasaBella','MetroFoods','GreenFork','Sol & Mar','TerraCotta','UrbanEats','PrimeGrocer','NightOwl'])[1 + (g % 10)], ' ', (ARRAY['Restaurant','Bar','Hotel','Supermarket','Catering'])[1 + (g % 5)]) as company_name,
+  gen_vat('CL', g) as vat_number,
+  concat((g % 200)+1, ' Market Street') as billing_address,
+  (ARRAY['Barcelona','Madrid','Valencia','Seville','Bilbao','Alicante','Malaga','Zaragoza','Palma','Santander'])[1 + (g % 10)] as city,
+  (ARRAY['Barcelona','Madrid','Valencia','Seville','Bilbao'])[1 + (g % 5)] as province,
+  to_char(10000 + (g % 90000), 'FM00000') as postal_code,
+  (ARRAY['Spain','Portugal','France','Italy','Germany'])[1 + (g % 5)] as country,
+  concat('+34', (690000000 + g)::text),
+  lower( replace( concat('contact', g, '@client.example.com'), ' ', '') ),
+  concat( (ARRAY['Miguel','Laura','Carlos','Ana','Jorge','Sofia','Diego','Elena','Pablo','Irene'])[1 + (g % 10)], ' ', (ARRAY['Gomez','Lopez','Silva','Fernandez','Martins'])[1 + (g % 5)] ),
+  (ARRAY['Restaurant','Bar','Supermarket','Hotel','Catering','Retail'])[1 + (g % 6)],
+  round( (50000 + random() * 200000)::numeric,2),
+  (current_date - (g % 365))::date,
+  'Active'
+FROM generate_series(1,500) AS g;
+
+-- Seed products (1000) with VAT rates (10% or 21% typical)
+DO $$
+DECLARE
+  categories TEXT[] := ARRAY[
+    'Beverages','Dairy','Bakery','Canned Goods','Snacks','Frozen','Condiments','Meat','Seafood',
+    'Pasta & Grains','Confectionery','Oils & Vinegars','Spices','Ready Meals','Produce','Breakfast Cereals'
+  ];
+  brands TEXT[] := ARRAY[
+    'GreenHarvest','AquaPure','Sunfield','Bella','GoldenGrain','VitalJuice','OceanCatch','MountainDairy','VivaCoffee','PureSip',
+    'UrbanBread','CampoOlive','CrispBite','MeadowFresh','RedVine','HerbGarden','PrimeMeats','EcoPack','BrewHouse','FreshCatch'
+  ];
+  formats TEXT[] := ARRAY[
+    'Bottle 1 L','Bottle 500 ml','Can 330 ml','Pack 6 x 330 ml','Jar 350 g','Bag 250 g','Box 12 pcs','Tray 1 kg','Pouch 400 g','Carton 1 L'
+  ];
+  origins TEXT[] := ARRAY['Spain','Portugal','Italy','France','Germany','Netherlands','Poland','Greece','Belgium','Ireland'];
+  provider_count INT;
+  i INT;
+  prov_id INT;
+  base_cost NUMERIC;
+  margin NUMERIC;
+  price NUMERIC;
+  ing_count INT;
+  ingr TEXT;
+  allergens_selected INT;
+  regnum TEXT;
+  lotcode TEXT;
+  prod_date DATE;
+  bb_date DATE;
+  vat_choice NUMERIC;
+BEGIN
+  SELECT count(*) INTO provider_count FROM providers;
+
+  FOR i IN 1..1000 LOOP
+    prov_id := ( (i * 37) % provider_count ) + 1;
+    base_cost := round( ( (0.5 + random() * 25) )::numeric, 2); -- base cost between 0.5 and 25 EUR
+    margin := round( (10 + random() * 120)::numeric, 2); -- margin between 10% and 130%
+    price := round( base_cost * (1 + margin/100)::numeric, 2);
+    ingr := '';
+    ing_count := 2 + (random() * 4)::int;
+    FOR reg IN 1..ing_count LOOP
+      ingr := ingr || (ARRAY['water','sugar','salt','wheat flour','milk','cocoa','olive oil','sunflower oil','eggs','yeast','tomato','beef','chicken','fish','lemon','orange','apple','garlic','onion','herbs','pepper','rice','potato','corn','soy'])[1 + (floor(random() * 24)::int)];
+      IF reg < ing_count THEN ingr := ingr || ', '; END IF;
+    END LOOP;
+    allergens_selected := 1 + floor(random() * 11);
+    regnum := concat('REG-', to_char(i, 'FM0000000'), '-', substring(md5(now()::text || i::text) from 1 for 6));
+    lotcode := concat('LOT', to_char((random()*1000000)::int,'FM000000'));
+    prod_date := (current_date - (1 + (random()*400)::int))::date;
+    bb_date := prod_date + ((30 + (random()*720)::int) || ' days')::interval;
+    vat_choice := CASE WHEN random() < 0.6 THEN 10.00 ELSE 21.00 END;
+    INSERT INTO products (sku, name, brand, category, description, ingredients, net_weight, format_description, origin_country, provider_id, lot_code, production_date, best_before, registration_number, unit_cost, margin_percent, unit_price, vat_rate, uom, created_at, status)
+    VALUES (
+      concat('SKU-', to_char(i,'FM0000000')),
+      concat( (brands[1 + (floor(random()*array_length(brands,1))::int)]), ' ', (categories[1 + (floor(random()*array_length(categories,1))::int)]) , ' ', (1 + (random()*999))::int ),
+      brands[1 + (floor(random()*array_length(brands,1))::int)],
+      categories[1 + (floor(random()*array_length(categories,1))::int)],
+      concat('High quality ', lower( (categories[1 + (floor(random()*array_length(categories,1))::int)]) ), ' product from trusted supplier.'),
+      ingr,
+      CASE WHEN random() < 0.4 THEN concat((100 + (random()*900)::int), ' g') ELSE concat((250 + (random()*1750)::int), ' g') END,
+      formats[1 + (floor(random()*array_length(formats,1))::int)],
+      origins[1 + (floor(random()*array_length(origins,1))::int)],
+      prov_id,
+      lotcode,
+      prod_date,
+      bb_date::date,
+      regnum,
+      base_cost,
+      margin,
+      price,
+      vat_choice,
+      'unit',
+      current_date - ((random()*365)::int),
+      'Active'
+    );
+    -- link a random allergen (for demo)
+    IF (random() < 0.45) THEN
+      INSERT INTO product_allergens (product_id, allergen_id)
+      VALUES (currval('products_id_seq'), 1 + floor(random() * (SELECT count(*) FROM allergens)));
+    END IF;
+  END LOOP;
+END $$;
+
+-- Seed example orders (10 orders with items)
+DO $$
+DECLARE
+  c INT;
+  p INT;
+  qty INT;
+  order_id INT;
+  total_net NUMERIC := 0;
+  total_vat NUMERIC := 0;
+  total_gross NUMERIC := 0;
+BEGIN
+  FOR c IN 1..10 LOOP
+    INSERT INTO orders (client_id, order_date, status) VALUES ( (1 + (c % 500)), now() - (c * interval '2 days'), 'Completed') RETURNING id INTO order_id;
+    total_net := 0; total_vat := 0; total_gross := 0;
+    FOR p IN 1..(3 + (random()*3)::int) LOOP
+      -- pick random product
+      PERFORM 1;
+      SELECT id, unit_price, vat_rate INTO STRICT p, qty FROM (SELECT id, unit_price, vat_rate FROM products ORDER BY random() LIMIT 1) t;
+      qty := 1 + (random()*10)::int;
+      INSERT INTO order_items (order_id, product_id, quantity, unit_price_net, vat_rate)
+      VALUES (order_id, p, qty, (SELECT unit_price FROM products WHERE id = p), (SELECT vat_rate FROM products WHERE id = p));
+      total_net := total_net + (SELECT round(unit_price * qty,2) FROM products WHERE id = p);
+      total_vat := total_vat + (SELECT round(unit_price * qty * (vat_rate/100),2) FROM products WHERE id = p);
+      total_gross := total_gross + (SELECT round(unit_price * qty * (1 + vat_rate/100),2) FROM products WHERE id = p);
+    END LOOP;
+    UPDATE orders SET total_net = round(total_net,2), total_vat = round(total_vat,2), total_gross = round(total_gross,2) WHERE id = order_id;
+  END LOOP;
+END $$;
+
+COMMIT;
+
+-- Quick verification queries (run after import)
+-- SELECT count(*) FROM providers; -- expect 50
+-- SELECT count(*) FROM workers; -- expect 20
+-- SELECT count(*) FROM clients; -- expect 500
+-- SELECT count(*) FROM products; -- expect 1000
+-- SELECT * FROM products LIMIT 5;
+-- SELECT * FROM orders ORDER BY order_date DESC LIMIT 10;

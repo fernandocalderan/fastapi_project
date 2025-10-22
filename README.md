@@ -30,10 +30,17 @@ pip install fastapi uvicorn sqlalchemy psycopg2-binary python-dotenv
 > Si dispones de un archivo `requirements.txt`, puedes ejecutar `pip install -r requirements.txt`.
 
 ## Configuracion
-1. Crea una base de datos vacia en PostgreSQL:
-   ```bash
-   psql -U postgres -c "CREATE DATABASE fastapi_db;"
-   ```
+1. Crea una base de datos vacia en PostgreSQL. Puedes hacerlo de dos maneras:
+   - **Con el script incluido en el proyecto:**
+     ```bash
+     python scripts/create_database.py --db-name fastapi_db --user postgres --password tu_password --host localhost --port 5432
+     ```
+     El script respeta las variables de entorno estándar (`PGUSER`, `PGPASSWORD`, `PGHOST`, etc.), de modo que también puedes exportarlas previamente y ejecutar simplemente `python scripts/create_database.py`.
+   - **Directamente con `psql` u otra herramienta:**
+     ```bash
+     psql -U postgres -h localhost -c "CREATE DATABASE fastapi_db;"
+     ```
+     Asegúrate de estar usando una cuenta con permisos para crear bases de datos.
 2. Copia el archivo de ejemplo `.env` (o crea uno nuevo) en la raiz del proyecto y ajusta las credenciales:
    ```env
    DATABASE_URL=postgresql://postgres:tu_password@localhost:5432/fastapi_db
@@ -89,6 +96,7 @@ sql/
 ```
 
 ## Scripts utiles
+- `scripts/create_database.py`: crea la base de datos objetivo (`fastapi_db` por defecto) si aún no existe.
 - `app/connect_postgres.py`: consulta rápida a PostgreSQL usando psycopg2 para validar credenciales y listar las tablas creadas.
 
 ## Carga de datos con archivos SQL

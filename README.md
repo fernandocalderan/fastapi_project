@@ -48,12 +48,21 @@ pip install fastapi uvicorn sqlalchemy psycopg2-binary python-dotenv
 3. Al iniciar la aplicacion, SQLAlchemy creará automáticamente todas las tablas del dominio (`suppliers`, `products`, `warehouses`, etc.) definidas en `app/models.py` si aún no existen.
 
 ## Ejecucion
+### Linux / macOS
 Inicia el servidor de desarrollo con Uvicorn:
 ```bash
 uvicorn app.main:app --reload
 ```
 
 Por defecto la API queda disponible en `http://127.0.0.1:8000`.
+
+### Windows (PowerShell)
+Puedes usar el script `run_fastapi.ps1` incluido en la raiz del proyecto para automatizar la activación del entorno virtual, la compilación y la ejecución del servidor:
+```powershell
+pwsh ./run_fastapi.ps1
+```
+
+El script buscará la primera plaza libre entre los puertos 8000 y 8010, mostrará el comando utilizado e iniciará una ventana de Uvicorn lista para trabajar.
 
 ## Endpoints
 | Metodo | Ruta              | Descripción                                                                 |
@@ -98,6 +107,7 @@ sql/
 ## Scripts utiles
 - `scripts/create_database.py`: crea la base de datos objetivo (`fastapi_db` por defecto) si aún no existe.
 - `app/connect_postgres.py`: consulta rápida a PostgreSQL usando psycopg2 para validar credenciales y listar las tablas creadas.
+- `run_fastapi.ps1`: automatiza en Windows la activación del entorno virtual, compila los módulos y arranca Uvicorn en un puerto disponible.
 
 ## Carga de datos con archivos SQL
 

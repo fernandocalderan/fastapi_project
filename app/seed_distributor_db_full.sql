@@ -136,9 +136,9 @@ CREATE TABLE order_items (
   quantity INT NOT NULL CHECK (quantity > 0),
   unit_price_net NUMERIC(10,2) NOT NULL,
   vat_rate NUMERIC(5,2) NOT NULL,
-  line_total_net NUMERIC(14,2) GENERATED ALWAYS AS (round(unit_price_net * quantity,2)) STORED,
-  line_total_vat NUMERIC(14,2) GENERATED ALWAYS AS (round(line_total_net * (vat_rate/100),2)) STORED,
-  line_total_gross NUMERIC(14,2) GENERATED ALWAYS AS (round(line_total_net * (1 + vat_rate/100),2)) STORED
+  line_total_net NUMERIC(14,2) GENERATED ALWAYS AS (round(unit_price_net * quantity, 2)) STORED,
+  line_total_vat NUMERIC(14,2) GENERATED ALWAYS AS (round(unit_price_net * quantity * (vat_rate/100), 2)) STORED,
+  line_total_gross NUMERIC(14,2) GENERATED ALWAYS AS (round(unit_price_net * quantity * (1 + vat_rate/100), 2)) STORED
 );
 
 -- Indexes for performance

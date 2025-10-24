@@ -316,28 +316,50 @@ END $$;
 DO $$
 DECLARE
   c INT;
-  p INT;
+  product_id INT;
   qty INT;
   order_id INT;
+  price NUMERIC;
+  vat_rate NUMERIC;
   total_net NUMERIC := 0;
   total_vat NUMERIC := 0;
   total_gross NUMERIC := 0;
 BEGIN
   FOR c IN 1..10 LOOP
-    INSERT INTO orders (client_id, order_date, status) VALUES ( (1 + (c % 500)), now() - (c * interval '2 days'), 'Completed') RETURNING id INTO order_id;
-    total_net := 0; total_vat := 0; total_gross := 0;
-    FOR p IN 1..(3 + (random()*3)::int) LOOP
-      -- pick random product
-      PERFORM 1;
-      SELECT id, unit_price, vat_rate INTO STRICT p, qty FROM (SELECT id, unit_price, vat_rate FROM products ORDER BY random() LIMIT 1) t;
+    INSERT INTO orders (client_id, order_date, status)
+    VALUES ((1 + (c % 500)), now() - (c * interval '2 days'), 'Completed')
+    RETURNING id INTO order_id;
+
+    total_net := 0;
+    total_vat := 0;
+    total_gross := 0;
+
+    FOR i IN 1..(3 + (random()*3)::int) LOOP
+      -- pick random product and keep its price + VAT for totals
+      SELECT id, unit_price, vat_rate
+      INTO STRICT product_id, price, vat_rate
+      FROM (
+        SELECT id, unit_price, vat_rate
+        FROM products
+        ORDER BY random()
+        LIMIT 1
+      ) t;
+
       qty := 1 + (random()*10)::int;
+
       INSERT INTO order_items (order_id, product_id, quantity, unit_price_net, vat_rate)
-      VALUES (order_id, p, qty, (SELECT unit_price FROM products WHERE id = p), (SELECT vat_rate FROM products WHERE id = p));
-      total_net := total_net + (SELECT round(unit_price * qty,2) FROM products WHERE id = p);
-      total_vat := total_vat + (SELECT round(unit_price * qty * (vat_rate/100),2) FROM products WHERE id = p);
-      total_gross := total_gross + (SELECT round(unit_price * qty * (1 + vat_rate/100),2) FROM products WHERE id = p);
+      VALUES (order_id, product_id, qty, price, vat_rate);
+
+      total_net := total_net + round(price * qty, 2);
+      total_vat := total_vat + round(price * qty * (vat_rate/100), 2);
+      total_gross := total_gross + round(price * qty * (1 + vat_rate/100), 2);
     END LOOP;
-    UPDATE orders SET total_net = round(total_net,2), total_vat = round(total_vat,2), total_gross = round(total_gross,2) WHERE id = order_id;
+
+    UPDATE orders
+    SET total_net = round(total_net, 2),
+        total_vat = round(total_vat, 2),
+        total_gross = round(total_gross, 2)
+    WHERE id = order_id;
   END LOOP;
 END $$;
 

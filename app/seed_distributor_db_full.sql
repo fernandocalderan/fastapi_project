@@ -546,6 +546,8 @@ SELECT
 FROM distributor_raw.order_items oi
 ORDER BY oi.id;
 
+SELECT setval('order_items_id_seq', COALESCE((SELECT MAX(id) FROM order_items), 0), true);
+
 COMMIT;
 
 -- Reset sequences dynamically so they stay aligned even if names differ from

@@ -7,6 +7,8 @@ BEGIN;
 
 -- Work inside a dedicated schema so we can later transform the data into the
 -- tables expected by the FastAPI application without clobbering them.
+DROP SCHEMA IF EXISTS distributor_raw CASCADE;
+CREATE SCHEMA distributor_raw;
 CREATE SCHEMA IF NOT EXISTS distributor_raw;
 SET search_path TO distributor_raw;
 
@@ -495,6 +497,21 @@ SELECT
 FROM distributor_raw.clients
 ORDER BY id;
 
+-- Logistics footprint derived for the canonical schema so that the API
+-- immediately exposes warehouses, inventory levels and shipment tracking.
+INSERT INTO public.warehouses (name, address, city, manager_name)
+SELECT name, address, city, manager_name
+FROM (
+    VALUES
+        ('Central Madrid Norte', 'Calle Logística 12', 'Madrid', 'Ana Prieto'),
+        ('Hub Barcelona Zona Franca', 'Av. del Puerto 455', 'Barcelona', 'Nil Forés'),
+        ('Nodo Valencia Mediterráneo', 'Polígono Safor 77', 'Valencia', 'Clara Llopis'),
+        ('Centro Sevilla Atlántico', 'Carretera Cádiz km 9', 'Sevilla', 'Rafael Moya'),
+        ('Depósito Bilbao Norte', 'Parque Industrial Ibaizabal 5', 'Bilbao', 'Uxue Aguirre'),
+        ('Plataforma Lisboa Tejo', 'Rua do Porto 210', 'Lisboa', 'Margarida Sousa')
+) AS w(name, address, city, manager_name)
+ORDER BY name;
+
 -- Warehouses and inventories remain empty because the raw dataset does not
 -- provide equivalent structures. Their sequences are adjusted in the post-load
 -- reset block below.
@@ -522,6 +539,35 @@ LEFT JOIN public.categories c
     ON c.name = COALESCE(NULLIF(p.category, ''), 'Sin categoría')
 ORDER BY p.id;
 
+WITH wh AS (
+    SELECT id, row_number() OVER (ORDER BY id) AS pos
+    FROM public.warehouses
+),
+top_products AS (
+    SELECT id, row_number() OVER (ORDER BY id) AS rn
+    FROM public.products
+    LIMIT 200
+),
+combinations AS (
+    SELECT
+        p.id AS product_id,
+        w.id AS warehouse_id,
+        (120 + ((p.rn * w.pos * 11) % 600))::int AS qty,
+        (current_date - ((p.rn + w.pos * 3) % 45))::date AS restocked
+    FROM top_products p
+    JOIN wh w
+        ON ((p.rn + w.pos) % 2 = 0)
+)
+INSERT INTO public.inventories (product_id, warehouse_id, quantity_on_hand, safety_stock, last_restocked)
+SELECT
+    product_id,
+    warehouse_id,
+    qty,
+    GREATEST(30, (qty / 4))::int AS safety_stock,
+    restocked
+FROM combinations
+ORDER BY product_id, warehouse_id;
+
 -- Orders with their totals (cast timestamp to date)
 INSERT INTO public.orders (id, customer_id, order_date, required_date, status, total_amount)
 SELECT
@@ -546,7 +592,32 @@ SELECT
 FROM distributor_raw.order_items oi
 ORDER BY oi.id;
 
-SELECT setval('order_items_id_seq', COALESCE((SELECT MAX(id) FROM order_items), 0), true);
+WITH warehouse_count AS (
+    SELECT count(*) AS total FROM public.warehouses
+),
+order_schedule AS (
+    SELECT
+        o.id,
+        ((o.id - 1) % warehouse_count.total) + 1 AS warehouse_id,
+        (o.order_date + ((o.id % 3) + 1) * interval '1 day') AS shipped_at,
+        (o.order_date::date + ((o.id % 6) + 2)) AS estimated_delivery,
+        CASE
+            WHEN (o.id % 5) = 0 THEN 'retrasado'
+            WHEN (o.id % 3) = 0 THEN 'en tránsito'
+            ELSE 'entregado'
+        END AS delivery_status
+    FROM public.orders o, warehouse_count
+)
+INSERT INTO public.shipments (order_id, warehouse_id, shipped_at, estimated_delivery, delivery_status, tracking_number)
+SELECT
+    id,
+    warehouse_id,
+    shipped_at,
+    estimated_delivery,
+    delivery_status,
+    concat('TRK-', lpad(id::text, 7, '0')) AS tracking_number
+FROM order_schedule
+ORDER BY id;
 
 COMMIT;
 
@@ -588,19 +659,43 @@ DO $$
 DECLARE
     customers_count BIGINT;
     orders_count BIGINT;
+    order_items_count BIGINT;
     products_count BIGINT;
     suppliers_count BIGINT;
+    warehouses_count BIGINT;
+    inventories_count BIGINT;
+    shipments_count BIGINT;
 BEGIN
     SELECT count(*) INTO customers_count FROM public.customers;
     SELECT count(*) INTO orders_count FROM public.orders;
+    SELECT count(*) INTO order_items_count FROM public.order_items;
     SELECT count(*) INTO products_count FROM public.products;
     SELECT count(*) INTO suppliers_count FROM public.suppliers;
+    SELECT count(*) INTO warehouses_count FROM public.warehouses;
+    SELECT count(*) INTO inventories_count FROM public.inventories;
+    SELECT count(*) INTO shipments_count FROM public.shipments;
 
-    RAISE NOTICE 'Canonical totals — customers: %, orders: %, products: %, suppliers: %',
+    IF customers_count = 0 OR orders_count = 0 OR products_count = 0 OR suppliers_count = 0 THEN
+        RAISE EXCEPTION 'Las tablas principales quedaron vacías (customers/orders/products/suppliers). Revisa los mensajes anteriores.';
+    END IF;
+
+    IF order_items_count = 0 THEN
+        RAISE EXCEPTION 'La tabla order_items no recibió datos. Revisa la generación de pedidos.';
+    END IF;
+
+    IF warehouses_count = 0 OR inventories_count = 0 OR shipments_count = 0 THEN
+        RAISE EXCEPTION 'Los datos logísticos no se poblaron (warehouses/inventories/shipments).';
+    END IF;
+
+    RAISE NOTICE 'Canonical totals — customers: %, orders: %, order_items: %, products: %, suppliers: %, warehouses: %, inventories: %, shipments: %',
         customers_count,
         orders_count,
+        order_items_count,
         products_count,
-        suppliers_count;
+        suppliers_count,
+        warehouses_count,
+        inventories_count,
+        shipments_count;
 END $$;
 
 -- Quick verification queries (run after import)

@@ -126,6 +126,8 @@ Si ya cuentas con un archivo `.sql` que contiene los registros para poblar la ba
    psql "$DATABASE_URL" -f sql/sample_seed.sql
    ```
 
+> 💡 Si necesitas un dataset grande con cientos de clientes, productos y pedidos simulados, ejecuta `app/seed_distributor_db_full.sql`. El script vuelca la información en un esquema auxiliar (`distributor_raw`) y luego sincroniza automáticamente las tablas oficiales (`customers`, `orders`, `products`, etc.) que usa la API, además de generar la capa logística (`warehouses`, `inventories`, `shipments`) con datos coherentes. Al finalizar, valida que todas las tablas clave contengan filas y aborta si detecta un vacío. También imprime un resumen con los totales (clientes, pedidos, partidas, productos, proveedores, bodegas, inventario y envíos) para que puedas comprobar de un vistazo que la carga masiva se ejecutó correctamente.
+
 Tras importar los datos podrás inspeccionarlos desde la API o directamente con consultas SQL.
 
 ## Siguientes pasos sugeridos

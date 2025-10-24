@@ -9,6 +9,7 @@ BEGIN;
 -- tables expected by the FastAPI application without clobbering them.
 DROP SCHEMA IF EXISTS distributor_raw CASCADE;
 CREATE SCHEMA distributor_raw;
+CREATE SCHEMA IF NOT EXISTS distributor_raw;
 SET search_path TO distributor_raw;
 
 -- Drop previous
@@ -137,9 +138,9 @@ CREATE TABLE order_items (
   quantity INT NOT NULL CHECK (quantity > 0),
   unit_price_net NUMERIC(10,2) NOT NULL,
   vat_rate NUMERIC(5,2) NOT NULL,
-  line_total_net NUMERIC(14,2) GENERATED ALWAYS AS (round(unit_price_net * quantity,2)) STORED,
-  line_total_vat NUMERIC(14,2) GENERATED ALWAYS AS (round(line_total_net * (vat_rate/100),2)) STORED,
-  line_total_gross NUMERIC(14,2) GENERATED ALWAYS AS (round(line_total_net * (1 + vat_rate/100),2)) STORED
+  line_total_net NUMERIC(14,2) GENERATED ALWAYS AS (round(unit_price_net * quantity, 2)) STORED,
+  line_total_vat NUMERIC(14,2) GENERATED ALWAYS AS (round(unit_price_net * quantity * (vat_rate/100), 2)) STORED,
+  line_total_gross NUMERIC(14,2) GENERATED ALWAYS AS (round(unit_price_net * quantity * (1 + vat_rate/100), 2)) STORED
 );
 
 -- Indexes for performance
@@ -511,6 +512,9 @@ FROM (
 ) AS w(name, address, city, manager_name)
 ORDER BY name;
 
+-- Warehouses and inventories remain empty because the raw dataset does not
+-- provide equivalent structures. Their sequences are adjusted in the post-load
+-- reset block below.
 -- Categories derived from the raw products catalog
 INSERT INTO public.categories (name, description)
 SELECT DISTINCT

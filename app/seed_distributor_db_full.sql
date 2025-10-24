@@ -3,6 +3,11 @@
 -- English data content simulated. Prices in EUR (net). VAT applied via vat_rate.
 BEGIN;
 
+-- Work inside a dedicated schema so we can later transform the data into the
+-- tables expected by the FastAPI application without clobbering them.
+CREATE SCHEMA IF NOT EXISTS distributor_raw;
+SET search_path TO distributor_raw;
+
 -- Drop previous
 DROP TABLE IF EXISTS order_items CASCADE;
 DROP TABLE IF EXISTS orders CASCADE;
@@ -336,12 +341,208 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Switch back to the public schema and synchronize the canonical tables used
+-- by the FastAPI application with the freshly generated raw data.
+SET search_path TO public;
+
+-- Ensure base tables exist (aligned with sql/schema.sql)
+CREATE TABLE IF NOT EXISTS suppliers (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(150) NOT NULL,
+    contact_name VARCHAR(120),
+    phone VARCHAR(40),
+    email VARCHAR(150),
+    address VARCHAR(200),
+    city VARCHAR(120),
+    country VARCHAR(120)
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(120) NOT NULL UNIQUE,
+    description VARCHAR(250)
+);
+
+CREATE TABLE IF NOT EXISTS products (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(150) NOT NULL,
+    sku VARCHAR(60) UNIQUE,
+    unit VARCHAR(40) NOT NULL,
+    unit_price NUMERIC(12,2) NOT NULL,
+    supplier_id INTEGER REFERENCES suppliers(id),
+    category_id INTEGER REFERENCES categories(id),
+    is_active CHAR(1) DEFAULT 'Y'
+);
+
+CREATE TABLE IF NOT EXISTS warehouses (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(120) NOT NULL UNIQUE,
+    address VARCHAR(200),
+    city VARCHAR(120),
+    manager_name VARCHAR(120)
+);
+
+CREATE TABLE IF NOT EXISTS inventories (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+    quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+    safety_stock INTEGER DEFAULT 0,
+    last_restocked DATE
+);
+
+CREATE TABLE IF NOT EXISTS customers (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(150) NOT NULL,
+    contact_name VARCHAR(120),
+    phone VARCHAR(40),
+    email VARCHAR(150),
+    address VARCHAR(200),
+    city VARCHAR(120),
+    country VARCHAR(120)
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    order_date DATE NOT NULL,
+    required_date DATE,
+    status VARCHAR(40) DEFAULT 'pendiente',
+    total_amount NUMERIC(12,2) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS order_items (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER NOT NULL REFERENCES orders(id),
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    quantity INTEGER NOT NULL,
+    unit_price NUMERIC(12,2) NOT NULL,
+    discount NUMERIC(5,2) DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS shipments (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER NOT NULL REFERENCES orders(id),
+    warehouse_id INTEGER REFERENCES warehouses(id),
+    shipped_at TIMESTAMP,
+    estimated_delivery DATE,
+    delivery_status VARCHAR(40) DEFAULT 'en tránsito',
+    tracking_number VARCHAR(120)
+);
+
+-- Clear previous canonical data so we can re-populate it from the raw tables
+TRUNCATE
+    order_items,
+    orders,
+    inventories,
+    shipments,
+    products,
+    categories,
+    warehouses,
+    customers,
+    suppliers
+    RESTART IDENTITY CASCADE;
+
+-- Suppliers
+INSERT INTO suppliers (id, name, contact_name, phone, email, address, city, country)
+SELECT
+    id,
+    company_name,
+    contact_person,
+    phone,
+    email,
+    address,
+    city,
+    country
+FROM distributor_raw.providers
+ORDER BY id;
+
+SELECT setval('suppliers_id_seq', COALESCE((SELECT MAX(id) FROM suppliers), 0), true);
+
+-- Customers
+INSERT INTO customers (id, name, contact_name, phone, email, address, city, country)
+SELECT
+    id,
+    company_name,
+    contact_person,
+    phone,
+    email,
+    billing_address,
+    city,
+    country
+FROM distributor_raw.clients
+ORDER BY id;
+
+SELECT setval('customers_id_seq', COALESCE((SELECT MAX(id) FROM customers), 0), true);
+
+-- Warehouses and inventories remain empty because the raw dataset does not
+-- provide equivalent structures. Ensure their sequences are reset.
+SELECT setval('warehouses_id_seq', 1, false);
+SELECT setval('inventories_id_seq', 1, false);
+SELECT setval('shipments_id_seq', 1, false);
+
+-- Categories derived from the raw products catalog
+INSERT INTO categories (name, description)
+SELECT DISTINCT
+    COALESCE(NULLIF(category, ''), 'Sin categoría') AS name,
+    'Categoría generada a partir del dataset completo'
+FROM distributor_raw.products
+ORDER BY name;
+
+SELECT setval('categories_id_seq', COALESCE((SELECT MAX(id) FROM categories), 0), true);
+
+-- Products mapped to the canonical schema
+INSERT INTO products (id, name, sku, unit, unit_price, supplier_id, category_id, is_active)
+SELECT
+    p.id,
+    p.name,
+    p.sku,
+    COALESCE(NULLIF(p.uom, ''), 'unidad') AS unit,
+    p.unit_price,
+    p.provider_id,
+    c.id AS category_id,
+    CASE WHEN COALESCE(p.status, 'Active') ILIKE 'Active%' THEN 'Y' ELSE 'N' END AS is_active
+FROM distributor_raw.products p
+LEFT JOIN categories c
+    ON c.name = COALESCE(NULLIF(p.category, ''), 'Sin categoría')
+ORDER BY p.id;
+
+SELECT setval('products_id_seq', COALESCE((SELECT MAX(id) FROM products), 0), true);
+
+-- Orders with their totals (cast timestamp to date)
+INSERT INTO orders (id, customer_id, order_date, required_date, status, total_amount)
+SELECT
+    o.id,
+    o.client_id,
+    o.order_date::date,
+    NULL,
+    o.status,
+    o.total_gross
+FROM distributor_raw.orders o
+ORDER BY o.id;
+
+SELECT setval('orders_id_seq', COALESCE((SELECT MAX(id) FROM orders), 0), true);
+
+-- Order items referencing canonical products
+INSERT INTO order_items (id, order_id, product_id, quantity, unit_price, discount)
+SELECT
+    oi.id,
+    oi.order_id,
+    oi.product_id,
+    oi.quantity,
+    oi.unit_price_net,
+    0
+FROM distributor_raw.order_items oi
+ORDER BY oi.id;
+
+SELECT setval('order_items_id_seq', COALESCE((SELECT MAX(id) FROM order_items), 0), true);
+
 COMMIT;
 
 -- Quick verification queries (run after import)
--- SELECT count(*) FROM providers; -- expect 50
--- SELECT count(*) FROM workers; -- expect 20
--- SELECT count(*) FROM clients; -- expect 500
--- SELECT count(*) FROM products; -- expect 1000
--- SELECT * FROM products LIMIT 5;
--- SELECT * FROM orders ORDER BY order_date DESC LIMIT 10;
+-- SELECT count(*) FROM distributor_raw.providers; -- expect 50
+-- SELECT count(*) FROM distributor_raw.workers; -- expect 20
+-- SELECT count(*) FROM distributor_raw.clients; -- expect 500
+-- SELECT count(*) FROM distributor_raw.products; -- expect 1000
+-- SELECT * FROM distributor_raw.products LIMIT 5;
+-- SELECT * FROM distributor_raw.orders ORDER BY order_date DESC LIMIT 10;

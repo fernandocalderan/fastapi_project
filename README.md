@@ -126,7 +126,7 @@ Si ya cuentas con un archivo `.sql` que contiene los registros para poblar la ba
    psql "$DATABASE_URL" -f sql/sample_seed.sql
    ```
 
-> 💡 Si necesitas un dataset grande con cientos de clientes, productos y pedidos simulados, ejecuta `app/seed_distributor_db_full.sql`. El script vuelca la información en un esquema auxiliar (`distributor_raw`) y luego sincroniza automáticamente las tablas oficiales (`customers`, `orders`, `products`, etc.) que usa la API, por lo que podrás consultar los registros inmediatamente desde FastAPI o Metabase.
+> 💡 Si necesitas un dataset grande con cientos de clientes, productos y pedidos simulados, ejecuta `app/seed_distributor_db_full.sql`. El script vuelca la información en un esquema auxiliar (`distributor_raw`) y luego sincroniza automáticamente las tablas oficiales (`customers`, `orders`, `products`, etc.) que usa la API, por lo que podrás consultar los registros inmediatamente desde FastAPI o Metabase. Al finalizar, `psql` mostrará un aviso con los totales insertados (clientes, pedidos, productos y proveedores) para que puedas comprobar de un vistazo que la carga se efectuó correctamente.
 
 Tras importar los datos podrás inspeccionarlos desde la API o directamente con consultas SQL.
 

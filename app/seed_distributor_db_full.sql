@@ -1,3 +1,5 @@
+\set ON_ERROR_STOP on
+
 -- seed_distributor_db_full.sql
 -- PostgreSQL 13+ | Educational seed DB for a food & beverage distributor
 -- English data content simulated. Prices in EUR (net). VAT applied via vat_rate.
@@ -454,19 +456,19 @@ CREATE TABLE IF NOT EXISTS shipments (
 
 -- Clear previous canonical data so we can re-populate it from the raw tables
 TRUNCATE
-    order_items,
-    orders,
-    inventories,
-    shipments,
-    products,
-    categories,
-    warehouses,
-    customers,
-    suppliers
+    public.order_items,
+    public.orders,
+    public.inventories,
+    public.shipments,
+    public.products,
+    public.categories,
+    public.warehouses,
+    public.customers,
+    public.suppliers
     RESTART IDENTITY CASCADE;
 
 -- Suppliers
-INSERT INTO suppliers (id, name, contact_name, phone, email, address, city, country)
+INSERT INTO public.suppliers (id, name, contact_name, phone, email, address, city, country)
 SELECT
     id,
     company_name,
@@ -479,10 +481,8 @@ SELECT
 FROM distributor_raw.providers
 ORDER BY id;
 
-SELECT setval('suppliers_id_seq', COALESCE((SELECT MAX(id) FROM suppliers), 0), true);
-
 -- Customers
-INSERT INTO customers (id, name, contact_name, phone, email, address, city, country)
+INSERT INTO public.customers (id, name, contact_name, phone, email, address, city, country)
 SELECT
     id,
     company_name,
@@ -495,26 +495,19 @@ SELECT
 FROM distributor_raw.clients
 ORDER BY id;
 
-SELECT setval('customers_id_seq', COALESCE((SELECT MAX(id) FROM customers), 0), true);
-
 -- Warehouses and inventories remain empty because the raw dataset does not
--- provide equivalent structures. Ensure their sequences are reset.
-SELECT setval('warehouses_id_seq', 1, false);
-SELECT setval('inventories_id_seq', 1, false);
-SELECT setval('shipments_id_seq', 1, false);
-
+-- provide equivalent structures. Their sequences are adjusted in the post-load
+-- reset block below.
 -- Categories derived from the raw products catalog
-INSERT INTO categories (name, description)
+INSERT INTO public.categories (name, description)
 SELECT DISTINCT
     COALESCE(NULLIF(category, ''), 'Sin categoría') AS name,
     'Categoría generada a partir del dataset completo'
 FROM distributor_raw.products
 ORDER BY name;
 
-SELECT setval('categories_id_seq', COALESCE((SELECT MAX(id) FROM categories), 0), true);
-
 -- Products mapped to the canonical schema
-INSERT INTO products (id, name, sku, unit, unit_price, supplier_id, category_id, is_active)
+INSERT INTO public.products (id, name, sku, unit, unit_price, supplier_id, category_id, is_active)
 SELECT
     p.id,
     p.name,
@@ -525,14 +518,12 @@ SELECT
     c.id AS category_id,
     CASE WHEN COALESCE(p.status, 'Active') ILIKE 'Active%' THEN 'Y' ELSE 'N' END AS is_active
 FROM distributor_raw.products p
-LEFT JOIN categories c
+LEFT JOIN public.categories c
     ON c.name = COALESCE(NULLIF(p.category, ''), 'Sin categoría')
 ORDER BY p.id;
 
-SELECT setval('products_id_seq', COALESCE((SELECT MAX(id) FROM products), 0), true);
-
 -- Orders with their totals (cast timestamp to date)
-INSERT INTO orders (id, customer_id, order_date, required_date, status, total_amount)
+INSERT INTO public.orders (id, customer_id, order_date, required_date, status, total_amount)
 SELECT
     o.id,
     o.client_id,
@@ -543,10 +534,8 @@ SELECT
 FROM distributor_raw.orders o
 ORDER BY o.id;
 
-SELECT setval('orders_id_seq', COALESCE((SELECT MAX(id) FROM orders), 0), true);
-
 -- Order items referencing canonical products
-INSERT INTO order_items (id, order_id, product_id, quantity, unit_price, discount)
+INSERT INTO public.order_items (id, order_id, product_id, quantity, unit_price, discount)
 SELECT
     oi.id,
     oi.order_id,
@@ -560,6 +549,59 @@ ORDER BY oi.id;
 SELECT setval('order_items_id_seq', COALESCE((SELECT MAX(id) FROM order_items), 0), true);
 
 COMMIT;
+
+-- Reset sequences dynamically so they stay aligned even if names differ from
+-- the default pattern (<table>_<column>_seq) on the target database.
+DO $$
+DECLARE
+    rec RECORD;
+BEGIN
+    FOR rec IN
+        SELECT
+            tbl_name,
+            pg_get_serial_sequence(tbl_name, 'id') AS seq_name
+        FROM (
+            VALUES
+                ('public.suppliers'),
+                ('public.customers'),
+                ('public.warehouses'),
+                ('public.inventories'),
+                ('public.products'),
+                ('public.orders'),
+                ('public.order_items'),
+                ('public.shipments')
+        ) AS t(tbl_name)
+    LOOP
+        IF rec.seq_name IS NOT NULL THEN
+            EXECUTE format(
+                'SELECT setval(%L, COALESCE((SELECT MAX(id) FROM %s), 0), true);',
+                rec.seq_name,
+                rec.tbl_name
+            );
+        END IF;
+    END LOOP;
+END $$;
+
+-- Quick verification notice so the operator can immediately confirm that the
+-- canonical tables now contain data available to FastAPI and Metabase.
+DO $$
+DECLARE
+    customers_count BIGINT;
+    orders_count BIGINT;
+    products_count BIGINT;
+    suppliers_count BIGINT;
+BEGIN
+    SELECT count(*) INTO customers_count FROM public.customers;
+    SELECT count(*) INTO orders_count FROM public.orders;
+    SELECT count(*) INTO products_count FROM public.products;
+    SELECT count(*) INTO suppliers_count FROM public.suppliers;
+
+    RAISE NOTICE 'Canonical totals — customers: %, orders: %, products: %, suppliers: %',
+        customers_count,
+        orders_count,
+        products_count,
+        suppliers_count;
+END $$;
 
 -- Quick verification queries (run after import)
 -- SELECT count(*) FROM distributor_raw.providers; -- expect 50

@@ -126,7 +126,7 @@ Si ya cuentas con un archivo `.sql` que contiene los registros para poblar la ba
    psql "$DATABASE_URL" -f sql/sample_seed.sql
    ```
 
-> ⚠️ El archivo `app/seed_distributor_db_full.sql` crea tablas alternativas (por ejemplo `clients`) que no coinciden con los modelos ORM (`customers`, `orders`, etc.) definidos en `app/models.py`. Si cargas únicamente ese script, la API y herramientas como Metabase no mostrarán resultados porque la tabla `customers` permanecerá vacía. Para trabajar con la API tal como está, utiliza `sql/sample_seed.sql`, crea clientes manualmente mediante peticiones `POST /customers/` o adapta el script para que inserte datos en las tablas oficiales.
+> 💡 Si necesitas un dataset grande con cientos de clientes, productos y pedidos simulados, ejecuta `app/seed_distributor_db_full.sql`. El script vuelca la información en un esquema auxiliar (`distributor_raw`) y luego sincroniza automáticamente las tablas oficiales (`customers`, `orders`, `products`, etc.) que usa la API, por lo que podrás consultar los registros inmediatamente desde FastAPI o Metabase.
 
 Tras importar los datos podrás inspeccionarlos desde la API o directamente con consultas SQL.
 
